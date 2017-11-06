@@ -38,6 +38,7 @@ $Authors: Hannes Roest$
 from __future__ import print_function
 import numpy
 import os
+import tempfile
 import csv
 import math
 import random
@@ -50,7 +51,7 @@ def get_smooting_operator(use_scikit=False, use_linear=False, use_external_r = F
     if use_scikit: 
         raise ImportError
     if use_external_r: 
-        return SmoothingRExtern(tmpdir)
+        return SmoothingRExtern(TMPDIR=tmpdir)
     import rpy2.robjects as robjects
     return SmoothingR()
   except ImportError:
@@ -72,7 +73,7 @@ def getSmoothingObj(smoother, topN=5, max_rt_diff=30, min_rt_diff=0.1, removeOut
     elif smoother == "splineR":
         return SmoothingR()
     elif smoother == "splineR_external":
-        return SmoothingRExtern()
+        return SmoothingRExtern(TMPDIR=tmpdir)
     elif smoother == "splinePy":
         return SmoothingPy()
     elif smoother == "lowess":
@@ -160,7 +161,7 @@ class SmoothingRExtern:
     """Class to smooth data using the smooth.spline function from R (extern system call)
     """
 
-    def __init__(self, TMPDIR="/tmp/"):
+    def __init__(self, TMPDIR=tempfile.gettempdir()):
         if TMPDIR is None:
             raise Exception("Tempdir needs to be set (cannot be none)")
         self.TMPDIR = TMPDIR
@@ -174,10 +175,10 @@ class SmoothingRExtern:
         self.internal_interpolation.initialize(arr[:,0], arr[:,1])
 
     def predict_R_(self, data1, data2, predict_data, TMPDIR):
-        fname = TMPDIR + "/datafile_feature_align_%s" % int(random.random() * 100000)
-        fname_pred = TMPDIR + "/datafile_feature_align_%s" % int(random.random() * 100000)
-        fname_out = TMPDIR + "/datafile_feature_align_%s" % int(random.random() * 100000)
-        Rscript = TMPDIR + "/tmp"+str(int(random.random() * 100000))+".R"
+        fname = os.path.join(TMPDIR, "datafile_feature_align_%s" % int(random.random() * 100000))
+        fname_pred = os.path.join(TMPDIR, "datafile_feature_align_%s" % int(random.random() * 100000))
+        fname_out = os.path.join(TMPDIR, "datafile_feature_align_%s" % int(random.random() * 100000))
+        Rscript = os.path.join(TMPDIR, "tmp"+str(int(random.random() * 100000))+".R")
 
         # Input file with datapoints
         fh = open(fname, "w")
@@ -216,13 +217,13 @@ class SmoothingRExtern:
             r = csv.reader(open(fname_out), delimiter="\t")
             next(r)
             arr = numpy.array([ (float(line[0]),float(line[1])) for line in r ])
-        except IOError:
+        except IOError as e:
             print("Something went wrong, I cannot find the file at ", fname_out)
             print("Debug output:")
             print("Input data length (d1, d2):", len(data1), len(data2))
             print("Input data length:", len(predict_data))
             print("Temporary directory :", TMPDIR)
-            raise IOError
+            raise e
 
 
         # Cleanup

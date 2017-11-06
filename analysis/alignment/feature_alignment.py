@@ -38,8 +38,8 @@ $Authors: Hannes Roest$
 import os, sys, csv, time
 import numpy
 import argparse
+import tempfile
 from msproteomicstoolslib.math.chauvenet import chauvenet
-import msproteomicstoolslib.math.Smoothing as smoothing
 from msproteomicstoolslib.format.SWATHScoringReader import *
 from msproteomicstoolslib.format.TransformationCollection import TransformationCollection, LightTransformationData
 from msproteomicstoolslib.algorithms.alignment.Multipeptide import Multipeptide
@@ -410,12 +410,12 @@ def estimate_aligned_fdr_cutoff(options, this_exp, multipeptides, fdr_range):
 
 def doMSTAlignment(exp, multipeptides, max_rt_diff, rt_diff_isotope, initial_alignment_cutoff,
                    fdr_cutoff, aligned_fdr_cutoff, smoothing_method, method,
-                   use_RT_correction, stdev_max_rt_per_run, use_local_stdev):
+                   use_RT_correction, stdev_max_rt_per_run, use_local_stdev, tmpdir=None):
     """
     Minimum Spanning Tree (MST) based local aligment 
     """
 
-    spl_aligner = SplineAligner(initial_alignment_cutoff)
+    spl_aligner = SplineAligner(initial_alignment_cutoff, external_r_tmpdir=tmpdir)
     tree = MinimumSpanningTree(getDistanceMatrix(exp, multipeptides, spl_aligner))
     print("Computed Tree:", tree)
     
@@ -424,7 +424,7 @@ def doMSTAlignment(exp, multipeptides, max_rt_diff, rt_diff_isotope, initial_ali
     for edge in tree:
         addDataToTrafo(tr_data, exp.runs[edge[0]], exp.runs[edge[1]],
                        spl_aligner, multipeptides, smoothing_method,
-                       max_rt_diff)
+                       max_rt_diff, tmpdir=tmpdir)
 
     tree_mapped = [ (exp.runs[a].get_id(), exp.runs[b].get_id()) for a,b in tree]
 
@@ -564,7 +564,7 @@ def handle_args():
     experimental_parser.add_argument("--dscore_cutoff", default=1.96, type=float, help="Quality cutoff to still consider a feature for alignment using the d_score: everything below this d-score is discarded", metavar='1.96')
     experimental_parser.add_argument("--nr_high_conf_exp", default=1, type=int, help="Number of experiments in which the peptide needs to be identified with high confidence (e.g. above fdr_curoff)", metavar='1')
     experimental_parser.add_argument("--readmethod", dest="readmethod", default="minimal", help="Read full or minimal transition groups (minimal,full)", metavar="minimal")
-    experimental_parser.add_argument("--tmpdir", dest="tmpdir", default="/tmp/", help="Temporary directory")
+    experimental_parser.add_argument("--tmpdir", dest="tmpdir", default=tempfile.gettempdir(), help="Temporary directory")
     experimental_parser.add_argument("--alignment_score", dest="alignment_score", default=0.0001, type=float, help="Minimal score needed for a feature to be considered for alignment between runs", metavar='0.0001')
     experimental_parser.add_argument("--mst:useRTCorrection", dest="mst_correct_rt", type=ast.literal_eval, default=False, help="Use aligned peakgroup RT to continue threading in MST algorithm", metavar='False')
     experimental_parser.add_argument("--mst:Stdev_multiplier", dest="mst_stdev_max_per_run", type=float, default=-1.0, help="How many standard deviations the peakgroup can deviate in RT during the alignment (if less than max_rt_diff, then max_rt_diff is used)", metavar='-1.0')
@@ -652,7 +652,7 @@ def main(options):
                        float(options.aligned_fdr_cutoff),
                        options.realign_method, options.method,
                        options.mst_correct_rt, stdev_max_rt_per_run,
-                       options.mst_local_stdev)
+                       options.mst_local_stdev, tmpdir=options.tmpdir)
         print("Re-aligning peak groups took %0.2fs" % (time.time() - start) )
     else:
         doReferenceAlignment(options, this_exp, multipeptides)
