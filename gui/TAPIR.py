@@ -35,35 +35,19 @@ $Authors: Hannes Roest$
 --------------------------------------------------------------------------
 """
 
-
-"""
-OpenSwath Viewer
-
-TODO: 
-    use QDockWidget
-
-Structure
-
-- TAPIR.py (main)
-./models
-    - ./models/TreeModels.py (contains the generic tree models)
-    - ./models/PeptideTree.py (contains the specific implementation of the left side peptide tree)
-    - ./models/ChromatogramTransition.py (contains the chromatogram transition abstraction which is stored in the peptide tree view)
-
-    - ./models/SingleChromatogramFile.py (data model for a single chrom.mzML file)
-    - ./models/SwathRun.py (data model for a single SWATH-MS run, may contain multiple chrom.mzML files)
-    - ./models/SwathRunCollection.py (data model for a set of SWATH-MS runs)
-    - ./models/MSData.py (contains the mass spectrometric data models)
-
-./views
-    - ./views/PeptideTree.py (contains the tree view implementation, derived from QtGui.QTreeView)
-    - ./views/Plot.py (contains the plot view, derived from Qwt.QwtPlot for the Qwt implementation or from the GuiQwt library)
-
-"""
-
 import sys,time, re
 import argparse
 
+## We need to import guiqt first
+## https://github.com/pierreraybaut/guidata/issues/35#issuecomment-171573060
+have_guiqwt = True
+try:
+    from guiqwt.curve import CurveItem
+except ImportError:
+    print "Could not import guiqwt, will try to use Qwt only."
+    have_guiqwt = False
+
+# from guidata import qt
 from PyQt4 import QtGui, QtCore
 from PyQt4.QtCore import Qt, QModelIndex
 
@@ -92,31 +76,49 @@ from openswathgui.models.PeptideTree import PeptideTree
 #
 from openswathgui.views.PeptideTree import PeptidesTreeView
 from openswathgui.views.Plot import have_guiqwt 
-if USE_GUIQWT and have_guiqwt:
-    from openswathgui.views.Plot import GuiQwtMultiLinePlot as MultiLinePlot
-else:
-    from openswathgui.views.Plot import QwtMultiLinePlot as MultiLinePlot
 
 # 
 ## The widget for the graphing area on the right
 #
 class GraphArea(QtGui.QWidget):
+    """
+    The Graph Area is displayed on the right side of the main area (see :class:`.ApplicationView`)
 
-    def __init__(self):
+    The actual implementation of the plotting is in the Plot model, see :mod:`.openswathgui.views.Plot`
+
+    Attributes:
+        self.plots: The underlying list of plots (either of type :class:`.GuiQwtMultiLinePlot` or :class:`.QwtMultiLinePlot`)
+    """
+
+    def __init__(self, use_guiqwt = USE_GUIQWT):
         super(GraphArea, self).__init__()
 
-        self.initUI()
+        self._initUI()
         self._wcount = 1
         self.nr_rows = 3
         self.autoscale_y_axis = True
         self.plots = []
+
+        self.changePlotEngine(use_guiqwt)
+
         # self.c.catch_mouse_press.connect(self.react_to_mouse)
         # self.c.catch_mouse_release.connect(self.react_to_mouse_release)
+
+    def changePlotEngine(self, use_guiqwt):
+        if use_guiqwt and have_guiqwt:
+            from openswathgui.views.Plot import GuiQwtMultiLinePlot as MultiLinePlot
+            self.MultiLinePlot = MultiLinePlot
+        else:
+            from openswathgui.views.Plot import QwtMultiLinePlot as MultiLinePlot
+            self.MultiLinePlot = MultiLinePlot
          
     @QtCore.pyqtSlot(float, float, float, float)
     def plotZoomChanged(self, xmin, xmax, ymin, ymax):
+        """
+        Slot to deal with the underlying plot emitting a zoomChanged signal
+        """
         # after (moving the image), adjust and replot _all_ plots
-        self.reset_axis_all_plots([xmin, xmax], [ymin, ymax], self.autoscale_y_axis)
+        self._reset_axis_all_plots([xmin, xmax], [ymin, ymax], self.autoscale_y_axis)
 
     # def react_to_mouse(self):
     #     print "react to mouse press"
@@ -133,41 +135,50 @@ class GraphArea(QtGui.QWidget):
     def set_communicate(self, comm):
         self.c = comm
 
-    def initUI(self):
+    def _initUI(self):
         self.layout = QtGui.QGridLayout(self)
 
-    def delete_all(self):
+    def _delete_all(self):
         for i in range(self.layout.count()):
             self.layout.itemAt(i).widget().close()
         self._wcount = 1
 
-    def add_new(self, l):
+    def _add_new(self, l):
         self.layout.addWidget(l, self._wcount, 0)
         self._wcount += 1
 
     def add_plots_dummy(self):
+        """
+        Add dummy plots for testing
+        """
         
         self.plots = []
 
-        self.plot = MultiLinePlot(edit=False, toolbar=False )
+        self.plot = self.MultiLinePlot(edit=False, toolbar=False )
         self.plot.create_curves([1,2,3], [ [0,0] ] )
-        self.add_new(self.plot)
+        self._add_new(self.plot)
         self.plots.append(self.plot)
 
         #self.plot2 = CurvePlotView( self )
-        self.plot2 = MultiLinePlot(edit=False, toolbar=False )
+        self.plot2 = self.MultiLinePlot(edit=False, toolbar=False )
         self.plot2.create_curves([1,2], [ [0,0] ])
-        self.add_new(self.plot2)
+        self._add_new(self.plot2)
         self.plots.append(self.plot2)
 
     def add_plots(self, datamodel):
+        """
+        Add a plot for each run that needs to be displayed
+
+        Args:
+            datamodel(:class:`.DataModel`): The data model containing data to plot
+        """
         
         self.plots = []
-        self.delete_all()
+        self._delete_all()
 
         for i, run in enumerate(datamodel.get_runs()):
 
-            self.plot = MultiLinePlot(edit=False, toolbar=False,
+            self.plot = self.MultiLinePlot(edit=False, toolbar=False,
                                       options=dict(xlabel="Time (s)", ylabel="Intensity") )
             self.plot.setDataModel(run)
 
@@ -180,7 +191,7 @@ class GraphArea(QtGui.QWidget):
             self.layout.addWidget(self.plot, i % self.nr_rows, int(i/self.nr_rows) )
             self.plots.append(self.plot)
 
-    def reset_axis_all_plots(self, x_range, y_range, autoscale_y_axis=False):
+    def _reset_axis_all_plots(self, x_range, y_range, autoscale_y_axis=False):
         for i, pl in enumerate(self.plots):
             pl.set_x_limits(x_range[0], x_range[1])
             if autoscale_y_axis:
@@ -213,31 +224,72 @@ class GraphArea(QtGui.QWidget):
             ranges = chr_transition.getRange(pl.run) 
             mscore = chr_transition.getProbScore(pl.run) 
             intensity = chr_transition.getIntensity(pl.run) 
+            assay_rt = chr_transition.getAssayRT(pl.run) 
+
+            xminsr = [r[0] for r in ranges]
+            xmaxsr = [r[1] for r in ranges]
+            xwidth = [r[1] - r[0] for r in ranges]
 
             # print "Got data for", i, "plot labels", labels, "from", chr_transition, "and nr data ", len(data)
             # print "Got mscore and int", mscore, intensity
+            # print "Got ranges ", ranges, labels, mscore, intensity
 
             # this next command takes about 10 ms per plot with Qwt, ca 30-40 ms with GuiQwt
-            pl.update_all_curves(data, labels, ranges, mscore, intensity, show_legend)
-            pl.set_x_limits(min(xmins),max(xmaxs))
+            pl.update_all_curves(data, labels, ranges, mscore, intensity, assay_rt, show_legend)
+
+            if mscore is None:
+                pl.set_x_limits(min(xmins),max(xmaxs))
+            else:
+                pl.set_x_limits(min(xminsr) - max(xwidth),max(xmaxsr) + max(xwidth))
+                pl.set_y_limits_auto(min(xminsr) - max(xwidth),max(xmaxsr) + max(xwidth))
+
             pl.replot()
 
 #
 ## Peptide Tree Widget (left side)
 # 
 class PeptideTreeWidget(QtGui.QWidget):
+    """
+    The Peptide Tree Widget is displayed on the left side of the main area (see
+    :class:`.ApplicationView`). It consists of a :class:`.PeptidesTreeView`
+    widget and a search box below.
+
+    Attributes:
+        - self._precursor_model: The underlying peptide tree model (of type :class:`.PeptideTree`)
+        - self.treeView: The underlying peptide tree view widget (of type :class:`.PeptidesTreeView`)
+        - self.treeLineEdit: A place for input below the tree
+        - self.treeComboBox: A combo box relating to the column for search
+
+    Emits the following signals:
+        - selectionChanged : when the peptide selection is changed
+    """
 
     # Signals
     selectionChanged = QtCore.pyqtSignal(QModelIndex)
+    """
+    Qt signal emitted when the peptide selection changes
+    """
 
     def __init__(self, firstColumnName):
         super(PeptideTreeWidget, self).__init__()
+
+        self._precursor_model = None
+        self.treeView = None
+
         self.first_column_name_ = firstColumnName
         self.initUI()
 
     def initUI(self):
+        """
+        Set up the model and the view
 
-        # Set up the model and the view
+        This sets up the layout as follows:
+            1. self.treeView widget
+            2. searchbox_layout layout
+                2.1 self.treeLineEdit (QtGui.QLineEdit)
+                2.2 self.treeComboBox (QtGui.QComboBox)
+        """
+
         self._precursor_model = PeptideTree([], firstColumnName=self.first_column_name_)
         self.treeView = PeptidesTreeView()
         self.treeView.setModel(self._precursor_model)
@@ -259,20 +311,23 @@ class PeptideTreeWidget(QtGui.QWidget):
         searchbox_layout.addWidget(self.treeComboBox) 
 
         # Combine the tree and the searchbox
-        self.leftside_layout = QtGui.QVBoxLayout()
-        self.leftside_layout.addWidget(self.treeView)
-        self.leftside_layout.addLayout(searchbox_layout)
-        self.setLayout(self.leftside_layout)
+        final_layout = QtGui.QVBoxLayout()
+        final_layout.addWidget(self.treeView)
+        final_layout.addLayout(searchbox_layout)
+        self.setLayout(final_layout)
 
         #
         ## Connect the Signals
         #
-        self.treeLineEdit.textChanged.connect(self.changedTextTest)
-        self.treeLineEdit.returnPressed.connect(self.changeReturnPressedTest)
+        self.treeLineEdit.textChanged.connect(self.changedText)
+        self.treeLineEdit.returnPressed.connect(self.changeReturnPressedSlot)
         # QItemSelectionModel -> connect the tree to here
-        self.treeView.selectionModel().selectionChanged.connect(self.treeViewSelectionChanged) 
+        self.treeView.selectionModel().selectionChanged.connect(self.treeViewSelectionChangedSlot) 
 
-    def changeReturnPressedTest(self):
+    def changeReturnPressedSlot(self):
+        """
+        Slot connected to the signal generated by pressing return in the text field
+        """
 
         if self.treeiter is None:
             return
@@ -283,7 +338,7 @@ class PeptideTreeWidget(QtGui.QWidget):
         except StopIteration:
             # If we have reached the bottom, wrap around
             try:
-                self.treeiter = self.generate_it(self.treeView, column, self.treeLineEdit.text())
+                self.treeiter = self._iterIndices(self.treeView, column, self.treeLineEdit.text())
                 model_idx = self.treeiter.next()
             except StopIteration:
                 # No match found
@@ -291,22 +346,27 @@ class PeptideTreeWidget(QtGui.QWidget):
 
         self.treeView.selectAndScrollTo(model_idx)
 
-    # Iterator generator function to go through all indexes
-    def generate_it(self, treeView, column_, text_):
+    def _iterIndices(self, treeView, column_, text_):
+        """
+        Iterator generator function to go through all indexes
+        """
 
         s = re.compile(str(text_), re.IGNORECASE)
         m = treeView.model()
 
         for model_idx in treeView.iterAllLevelElements(column_):
-            display_data = m.data(model_idx, Qt.DisplayRole).toPyObject()
+            display_data = m.data(model_idx, Qt.DisplayRole)
             if s.search(display_data):
                 yield model_idx
 
-    def changedTextTest(self, text):
+    def changedText(self, text):
+        """
+        Slot connected to the signal generated by changing the text in the text field
+        """
 
         column =  self.treeComboBox.currentIndex()
         try:
-            self.treeiter = self.generate_it(self.treeView, column, text)
+            self.treeiter = self._iterIndices(self.treeView, column, text)
             model_idx = self.treeiter.next()
         except StopIteration:
             # No match found
@@ -315,7 +375,7 @@ class PeptideTreeWidget(QtGui.QWidget):
         self.treeView.selectAndScrollTo(model_idx)
 
     @QtCore.pyqtSlot(QtGui.QItemSelectionModel, QtGui.QItemSelectionModel)
-    def treeViewSelectionChanged(self, newvalue, oldvalue):
+    def treeViewSelectionChangedSlot(self, newvalue, oldvalue):
         if len(newvalue.indexes()) == 0 :
             return
 
@@ -335,6 +395,14 @@ class PeptideTreeWidget(QtGui.QWidget):
             self.treeView.collapseAll()
 
     def get_precursor_model(self):
+        """
+        Access to the underlying precursor model
+
+        Returns
+        -------
+        precursor_model : :class:`.PeptideTree`
+            The underlying precursor model 
+        """
         return self._precursor_model
 
 
@@ -342,30 +410,53 @@ class PeptideTreeWidget(QtGui.QWidget):
 ## Main Widget
 # 
 class ApplicationView(QtGui.QWidget):
+
+    """
+    The main/central widget for the application which is directly called from the MainWindow
+
+    Attributes:
+        self.leftside: Reference to the left side widget (of type :class:`.PeptideTreeWidget`)
+        self.graph_layout: Reference to the right side widget (of type :class:`.GraphArea`)
+
+    Emits the following signals:
+        - plotsUpdate : when the plots need to be updated
+    """
     
     # Signals
     plotsUpdated = QtCore.pyqtSignal(float)
+    """
+    Qt signal emitted when plots need to be updated due to selecting a different peptide
+    """
 
     def __init__(self, parent, settings):
         super(ApplicationView, self).__init__()
         self.parent = None
         self.treeiter = None
         self.settings = settings
-        self.initUI()
+
+        self.leftside = None # leftside widget
+        self.graph_layout = None # rightside widget (graph area)
+
+        self._initUI()
         
     @QtCore.pyqtSlot(QModelIndex)
     def treeSelectionChanged(self, idx):
+        """
+        Grab the selectionChanged signal from the :class:`.PeptideTreeWidget` and
+        accordingly update the graphing area on the right.
+        """
         s = time.time()
         self.graph_layout.update_all_plots(idx.internalPointer().ref, self.settings.show_legend)
         self.plotsUpdated.emit(time.time()-s)
 
-    def initUI(self):
+    def _initUI(self):
 
+        # Do the peptide tree on the left side and connect its signals
         self.leftside = PeptideTreeWidget(self.settings.first_column_name_)
         self.leftside.selectionChanged.connect(self.treeSelectionChanged)
 
-        # Do the main application (leftside/graphing area)
-        self.graph_layout = GraphArea()
+        # Do the main application (graphing area on the right side)
+        self.graph_layout = GraphArea(settings.use_guiqwt)
         horizontal_splitter = QtGui.QSplitter(QtCore.Qt.Horizontal)
         horizontal_splitter.addWidget(self.leftside)
         horizontal_splitter.addWidget(self.graph_layout)
@@ -379,13 +470,25 @@ class ApplicationView(QtGui.QWidget):
         self.graph_layout.add_plots_dummy()
 
     def get_precursor_model(self):
+        """
+        Access to the underlying precursor model
+
+        Returns
+        -------
+        precursor_model : The underlying precursor model of class :class:`.PeptideTree`
+        """
         return self.leftside.get_precursor_model()
 
     def set_communication(self, c):
         self.c = c
 
-
     def add_plots(self, datamodel):
+        """
+        Add a plot for each run that needs to be displayed (calls the underlying :class:`.GraphArea`)
+
+        Args:
+            datamodel(:class:`.DataModel`): The data model containing data to plot
+        """
         self.graph_layout.add_plots(datamodel)
         self.leftside.expandLevel("smart")
 
@@ -393,18 +496,18 @@ class ApplicationView(QtGui.QWidget):
         print "clicked iittt"
 
 
-
 #
 ## Settings object
 # 
 class Settings(object):
 
-    def __init__(self, runMode ):
+    def __init__(self, runMode, use_guiqwt = False):
         self.show_legend = True
         self.draw_transitions = False
         self.autoscale_y_axis = True
         self.nr_rows = 3
         self.window_title = 'TAPIR'
+        self.use_guiqwt = use_guiqwt
 
         if runMode == "proteomics":
             self.first_column_name_ = 'Identifier'
@@ -417,23 +520,36 @@ class Settings(object):
 ## Configuration Dialog
 # 
 class ConfigDialog(QtGui.QDialog):
+    """
+    Configuration Dialog 
+    """
 
     def __init__(self, parent, settings):
         QtGui.QDialog.__init__(self, parent)
         self.settings = settings
         self.parent = parent
-        self.initUI()
+        self._initUI()
 
     def closeAndSave(self):
+        """
+        Responds to the close and save action
+        """
+
+        if not have_guiqwt and self.use_guiqwt.isChecked():
+            box = QtGui.QMessageBox.about(self, "Error", "QtGui is not available, please remove it.")
+            box.setIcont(QtGui.QMessageBox.Critical)
+            return
+
         self.settings.window_title = str(self.window_title.text())
         self.settings.nr_rows = int(self.nr_rows.text())
         self.settings.show_legend = self.show_legend.isChecked()
         self.settings.draw_transitions = self.draw_transitions.isChecked()
         self.settings.autoscale_y_axis = self.autoscale_y_axis.isChecked()
+        self.settings.use_guiqwt = self.use_guiqwt.isChecked()
         self.parent.updateSettings(self.settings)
         self.close()
 
-    def initUI(self):
+    def _initUI(self):
 
         # Right side layout
         # contentsWidget = QtGui.QListWidget()
@@ -448,6 +564,7 @@ class ConfigDialog(QtGui.QDialog):
         self.show_legend = QtGui.QCheckBox("Show legend");
         self.draw_transitions = QtGui.QCheckBox("Draw individual transitions");
         self.autoscale_y_axis = QtGui.QCheckBox("Autoscale y axis");
+        self.use_guiqwt = QtGui.QCheckBox("Use guiqwt advanced graphics (slower)");
         label_rows = QtGui.QLabel("Number of window rows");
         self.nr_rows = QtGui.QLineEdit();
         label_rows = QtGui.QLabel("Window Title");
@@ -456,6 +573,7 @@ class ConfigDialog(QtGui.QDialog):
         self.show_legend.setChecked( self.settings.show_legend )
         self.draw_transitions.setChecked( self.settings.draw_transitions )
         self.autoscale_y_axis.setChecked( self.settings.autoscale_y_axis )
+        self.use_guiqwt.setChecked( self.settings.use_guiqwt )
         self.nr_rows.setText( str(self.settings.nr_rows) )
         self.window_title.setText( str(self.settings.window_title) )
 
@@ -463,6 +581,7 @@ class ConfigDialog(QtGui.QDialog):
         updateLayout.addWidget(self.show_legend);
         updateLayout.addWidget(self.draw_transitions);
         updateLayout.addWidget(self.autoscale_y_axis);
+        updateLayout.addWidget(self.use_guiqwt);
         updateLayout.addWidget(label_rows);
         updateLayout.addWidget(self.nr_rows);
         updateLayout.addWidget(self.window_title);
@@ -492,17 +611,30 @@ class ConfigDialog(QtGui.QDialog):
 ## Main Window
 # 
 class MainWindow(QtGui.QMainWindow):
+    """
+    The main window running the application.
+
+    - It contains a reference to the actual MS data model (self.data_model [models/MSData.py])
+    - It contains a reference to the main widget (self.application_view [ApplicationView])
+
+    - It loads files through self.loadFiles which delegates the call to the data model
+
+    Attributes:
+        self.data_model: Reference to the underlying data model (of type :class:`.DataModel`)
+        self.application: Reference to the actual main widget (of type :class:`.ApplicationView`)
+    """
     
     def __init__(self, settings):
         super(MainWindow, self).__init__()
         
         self.settings = settings
         self.c = Communicate()
-        self.data_model = DataModel()
+        self.data_model = DataModel() # see models/MSData.py
+        self.application = None # main application (ApplicationView), see initUI
 
-        self.initUI()
+        self._initUI()
         
-    def initUI(self):               
+    def _initUI(self):               
 
         self.data_model.setDrawTransitions( self.settings.draw_transitions )
         
@@ -527,7 +659,7 @@ class MainWindow(QtGui.QMainWindow):
                 QtGui.QIcon.Normal, QtGui.QIcon.On)
         openSettings = QtGui.QAction(openSettingsIcon, 'Open Settings', self)
         openSettings.setStatusTip('Open settings dialog')
-        openSettings.triggered.connect(self.showSettings)
+        openSettings.triggered.connect(self._showSettings)
 
         exitIcon = QtGui.QIcon("")
         exitAction = QtGui.QAction(exitIcon, 'Exit', self)
@@ -556,13 +688,16 @@ class MainWindow(QtGui.QMainWindow):
         
         # self.setGeometry(300, 300, 250, 150)
         self.resize(850, 550)
-        self.center()
+        self._center()
         self.setWindowTitle(self.settings.window_title)
         self.show()
         self.statusBar().showMessage('Ready')
 
     @QtCore.pyqtSlot(float)
     def plotsUpdated(self, time_taken):
+        """
+        Qt slot: updates the status bar when :class:`.ApplicationView` emits :meth:`.ApplicationView.plotsUpdated`
+        """
         self.statusBar().showMessage(self.data_model.getStatus() + ". Drawn plots in %0.4fs."  % (time_taken))
 
     def showFileLoadDialog(self):
@@ -597,16 +732,27 @@ class MainWindow(QtGui.QMainWindow):
             self.data_model.load_from_yaml(pyFileList[0])
         elif all( [f.lower().endswith("mzml") for f in pyFileList] ):
             self.data_model.loadFiles(pyFileList)
+        elif all( [f.lower().endswith("sqmass") for f in pyFileList] ):
+            self.data_model.loadSqMassFiles(pyFileList)
         else:
+            if any( [f.lower().endswith("sqmass") for f in pyFileList] ):
 
-            # Separate the mzML and other files
-            mzmls = [f for f in pyFileList if f.lower().endswith("mzml")]
-            others = [f for f in pyFileList if not f.lower().endswith("mzml")]
+                # Separate the mzML and other files
+                sqmass = [f for f in pyFileList if f.lower().endswith("sqmass")]
+                others = [f for f in pyFileList if not f.lower().endswith("sqmass")]
 
-            if fileType == None and len(others) == 1 and others[0].lower().endswith("traml"):
-                fileType = "traml"
+                fileType = "sqmass"
+                self.data_model.loadMixedFiles(sqmass, others, fileType)
+            else:
 
-            self.data_model.loadMixedFiles(mzmls, others, fileType)
+                # Separate the mzML and other files
+                mzmls = [f for f in pyFileList if f.lower().endswith("mzml")]
+                others = [f for f in pyFileList if not f.lower().endswith("mzml")]
+
+                if fileType == None and len(others) == 1 and others[0].lower().endswith("traml"):
+                    fileType = "traml"
+
+                self.data_model.loadMixedFiles(mzmls, others, fileType)
 
         # After loading, refresh view and print load time
         self._refresh_view(time=time.time()-start)
@@ -618,11 +764,12 @@ class MainWindow(QtGui.QMainWindow):
 
         self.application.graph_layout.nr_rows = settings.nr_rows
         self.application.graph_layout.autoscale_y_axis = settings.autoscale_y_axis
+        self.application.graph_layout.changePlotEngine(settings.use_guiqwt)
         self.data_model.setDrawTransitions( settings.draw_transitions )
         self.setWindowTitle(self.settings.window_title)
         self._refresh_view()
 
-    def showSettings(self):
+    def _showSettings(self):
         settings = ConfigDialog(self, self.settings)
         settings.show()
 
@@ -637,11 +784,11 @@ class MainWindow(QtGui.QMainWindow):
         tmessage = ""
         if time > 0:
             tmessage = ". Loading took %0.4fs" % time
+
         self.statusBar().showMessage(self.data_model.getStatus() + tmessage)
         self.application.add_plots(self.data_model)
 
-    def center(self):
-        
+    def _center(self):
         qr = self.frameGeometry()
         cp = QtGui.QDesktopWidget().availableGeometry().center()
         qr.moveCenter(cp)
@@ -658,6 +805,8 @@ def handle_args():
                         help = 'Type of files describing the relations (simple, openswath, yaml)')
     parser.add_argument('--runMode', dest="run_mode", required=False, default="proteomics",
                         help = 'Mode to run in (proteomics, metabolomics)')
+    parser.add_argument('--use_guiqwt', dest="use_guiqwt", required=False, default="False",
+                        help = 'Whether to use guiQwt (False,True)')
     args = parser.parse_args(sys.argv[1:])
     return args
 
@@ -665,7 +814,7 @@ if __name__ == '__main__':
 
     # Handle command line options
     options = handle_args()
-    settings = Settings(options.run_mode)
+    settings = Settings(options.run_mode, options.use_guiqwt == "True")
 
     # Set up Qt application
     app = QtGui.QApplication(sys.argv)

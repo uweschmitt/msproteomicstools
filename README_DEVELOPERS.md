@@ -1,4 +1,6 @@
-Please follow the install instructions in the main README.md file
+Please follow the install instructions in the [main README file](README.md)
+before you continue reading For full documentation, see [the online
+documentation](http://msproteomicstools.hroest.ch/index.html).
 
 # Testing 
 
@@ -13,6 +15,18 @@ with coverage analysis
 or disable all slow tests for a faster response
 
     nosetests -a '!slow' test
+
+using the same approach, also tests that require rpy2 or cython can be disabled:
+
+    nosetests -a '!slow,!rpy2,!cython' test
+
+# Cython
+
+There is an (optional) Cython extension that currently only works under Python 2.x, to activate it use
+
+	python setup.py build --with_cython
+
+the resulting C++ modules are intended to speed up TRIC substantially.
 
 # Dependencies
 

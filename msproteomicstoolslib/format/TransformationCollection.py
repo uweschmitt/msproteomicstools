@@ -154,7 +154,7 @@ class TransformationCollection():
       except KeyError:
           return None
 
-    def initialize_from_data(self, reverse=False, smoother="lowess"):
+    def initialize_from_data(self, reverse=False, smoother="lowess", force=False):
 
         # use the data in self.transformation_data to create the trafos
         for s_from, darr in self.transformation_data.items():
@@ -193,8 +193,8 @@ class TransformationCollection():
       """
       assert isinstance(data, list)
       assert len(data) == 2
-      assert isinstance(data[0], list)
-      assert isinstance(data[1], list)
+      assert isinstance(data[0], list) or isinstance(data[0], numpy.ndarray)
+      assert isinstance(data[1], list) or isinstance(data[1], numpy.ndarray)
       d = self.transformation_data.get(s_from, {})
       d[s_to] = data
       self.transformation_data[s_from] = d

@@ -36,6 +36,8 @@ $Authors: Hannes Roest$
 """
 
 from __future__ import print_function
+from __future__ import division
+
 import os, sys, csv, time
 import numpy
 import argparse
@@ -71,15 +73,15 @@ class ImputeValuesHelper(object):
             mz(float): the mz value of the precursor
         """
         mz = mz + SWATH_EDGE_SHIFT
-        swath_window_low = int(mz / 25) *25
-        swath_window_high = int(mz / 25) *25 + 25
+        swath_window_low = int(mz // 25) * 25
+        swath_window_high = int(mz // 25) * 25 + 25
         res = {}
-        for k,v in swath_chromatograms.items():
+        for k, v in swath_chromatograms.items():
             # TODO smarter selection here
-            selected = [vv for prec_mz,vv in v.items() if prec_mz >= swath_window_low and prec_mz < swath_window_high]
+            selected = [vv for prec_mz, vv in v.items() if prec_mz >= swath_window_low and prec_mz < swath_window_high]
             if len(v) == 1: 
                 # We have merged chrom.mzML file (only one file)
-                selected = v.values()
+                selected = list(v.values())
             if len(selected) == 1: 
                 res[k] = selected[0]
         return res
@@ -102,6 +104,7 @@ class SwathChromatogramRun(object):
                 continue
             run = pymzml.run.Reader(f, build_index_from_scratch=True)
             if not run.info["seekable"]:
+                print("Could not open mzML file %s in seekable mode. Please use unzipped files, preferably with an index (using the indexedmzML standard).") 
                 raise Exception("Could not properly read file", f)
             self.chromfiles.append(run)
 
@@ -194,7 +197,7 @@ class SwathChromatogramCollection(object):
             print("Parsing chromatograms in", filename, "took %0.4fs" % (time.time() - start))
 
     def getRunIDs(self):
-        return self.allruns.keys()
+        return list(self.allruns.keys())
 
 # Main entry points:
 # runSingleFileImputation -> for tree based, new imputation
@@ -228,7 +231,8 @@ def runSingleFileImputation(options, peakgroups_file, mzML_file, method, is_test
     reader = SWATHScoringReader.newReader([peakgroups_file],
                                           options.file_format,
                                           readmethod="complete",
-                                          enable_isotopic_grouping = not options.disable_isotopic_grouping)
+                                          enable_isotopic_grouping = not options.disable_isotopic_grouping,
+                                          read_cluster_id=True)
     new_exp = Experiment()
     new_exp.runs = reader.parse_files()
     multipeptides = new_exp.get_all_multipeptides(fdr_cutoff_all_pg, verbose=False)
@@ -239,7 +243,7 @@ def runSingleFileImputation(options, peakgroups_file, mzML_file, method, is_test
     sequences_mapping = {}
     protein_mapping = {}
     inferMapping([ mzML_file ], [ peakgroups_file ], mapping, precursors_mapping, sequences_mapping, protein_mapping, verbose=False)
-    mapping_inv = dict([(v[0],k) for k,v in mapping.items()])
+    mapping_inv = dict((v[0], k) for k, v in mapping.items())
     if VERBOSE:
         print (mapping)
 
@@ -256,7 +260,7 @@ def runSingleFileImputation(options, peakgroups_file, mzML_file, method, is_test
     max_rt_diff = 30
     sd_data = -1 # We do not use the standard deviation data in this algorithm
     tr_data = transformations.LightTransformationData()
-    spl_aligner = SplineAligner(initial_alignment_cutoff)
+    spl_aligner = SplineAligner(initial_alignment_cutoff, new_exp)
 
     if method == "singleClosestRun":
         tree_mapped = None
@@ -268,7 +272,7 @@ def runSingleFileImputation(options, peakgroups_file, mzML_file, method, is_test
         start = time.time()
         for run_0 in new_exp.runs:
             helper.addDataToTrafo(tr_data, run_0, run_1, spl_aligner, multipeptides,
-                options.realign_method, max_rt_diff, sd_max_data_length=sd_data)
+                options.realign_method, max_rt_diff, sd_max_data_length=sd_data, force=is_test)
 
     elif method == "singleShortestPath":
         dist_matrix = None
@@ -281,7 +285,7 @@ def runSingleFileImputation(options, peakgroups_file, mzML_file, method, is_test
         for edge in tree:
             helper.addDataToTrafo(tr_data, new_exp.runs[edge[0]], 
                 new_exp.runs[edge[1]], spl_aligner, multipeptides, 
-                options.realign_method, max_rt_diff, sd_max_data_length=sd_data)
+                options.realign_method, max_rt_diff, sd_max_data_length=sd_data, force=is_test)
 
     else:
         raise Exception("Unknown method: " + method)
@@ -323,7 +327,8 @@ def runImputeValues(options, peakgroups_file, trafo_fnames, is_test):
     reader = SWATHScoringReader.newReader([peakgroups_file],
                                           options.file_format,
                                           readmethod="complete",
-                                          enable_isotopic_grouping = not options.disable_isotopic_grouping)
+                                          enable_isotopic_grouping = not options.disable_isotopic_grouping, 
+                                          read_cluster_id=True)
     new_exp = Experiment()
     new_exp.runs = reader.parse_files()
     multipeptides = new_exp.get_all_multipeptides(fdr_cutoff_all_pg, verbose=False)
@@ -337,7 +342,7 @@ def runImputeValues(options, peakgroups_file, trafo_fnames, is_test):
     # Read the datapoints and perform the smoothing
     print("Reading the trafo file took %ss" % (time.time() - start) )
     start = time.time()
-    transformation_collection_.initialize_from_data(reverse=True, smoother=options.realign_method)
+    transformation_collection_.initialize_from_data(reverse=True, smoother=options.realign_method, force=is_test)
     print("Initializing the trafo file took %ss" % (time.time() - start) )
 
     rid = None
@@ -414,7 +419,7 @@ def analyze_multipeptides(new_exp, multipeptides, swath_chromatograms,
     """
 
     # Go through all aligned peptides
-    class CounterClass: pass
+    class CounterClass(object): pass
     cnt = CounterClass()
     cnt.integration_bnd_warnings = 0
     cnt.imputations = 0
@@ -584,7 +589,7 @@ def analyze_multipeptide_cluster(current_mpep, cnt, new_exp, swath_chromatograms
                     border_l, border_r = integrationBorderShortestDistance(selected_pg, 
                         rid, transformation_collection_, mat, rmap)
                 else:
-                    ## Use the refernce-based approach
+                    ## Use the reference-based approach
                     border_l, border_r = integrationBorderReference(new_exp, selected_pg, rid, transformation_collection_, border_option)
                 newpg = integrate_chromatogram(selected_pg[0], current_run, swath_chromatograms,
                                              border_l, border_r, cnt, is_test)
@@ -662,7 +667,7 @@ def integrate_chromatogram(template_pg, current_run, swath_chromatograms,
     newpg.set_value("run_id", current_rid)
     newpg.set_value("filename", orig_filename)
     newpg.set_value("align_origfilename", aligned_filename)
-    newpg.set_value("RT", (left_start + right_end) / 2.0 )
+    newpg.set_value("RT", (left_start + right_end) / 2.0)
     newpg.set_value("leftWidth", left_start)
     newpg.set_value("rightWidth", right_end)
     newpg.set_value("m_score", 2.0)
@@ -670,8 +675,8 @@ def integrate_chromatogram(template_pg, current_run, swath_chromatograms,
     newpg.set_value("peak_group_rank", -1)
 
     import uuid 
-    thisid = str(uuid.uuid1() )
-    newpg.set_normalized_retentiontime((left_start + right_end) / 2.0 )
+    thisid = str(uuid.uuid1())
+    newpg.set_normalized_retentiontime((left_start + right_end) / 2.0)
     newpg.set_fdr_score(2.0)
     newpg.set_feature_id(thisid)
     if not is_test:
@@ -764,15 +769,15 @@ def handle_args():
     parser.add_argument('--in', dest="infiles", nargs = '+', required=False, help = 'A list of transformation files in the same folder as the .chrom.mzML files')
     parser.add_argument("--peakgroups_infile", dest="peakgroups_infile", required=True, help="Infile containing peakgroups (outfile from feature_alignment.py)")
     parser.add_argument("--out", dest="output", required=True, help="Output file with imputed values")
-    parser.add_argument('--file_format', default='openswath', help="Which input file format is used (openswath or peakview)")
+    parser.add_argument('--file_format', default='openswath', help="Which input file format is used (openswath, mprophet or peakview)")
     parser.add_argument("--out_matrix", dest="matrix_outfile", default="", help="Matrix containing one peak group per row (supports .csv, .tsv or .xls)")
     parser.add_argument("--matrix_output_method", dest="matrix_output_method", default='none', help="Which columns are written besides Intensity (none, RT, score, source or full)")
     parser.add_argument('--border_option', default='median', metavar="median", help="How to determine integration border (possible values: max_width, mean, median). Max width will use the maximal possible width (most conservative since it will overestimate the background signal).")
     parser.add_argument('--dry_run', action='store_true', default=False, help="Perform a dry run only")
     parser.add_argument('--test', dest="is_test", action='store_true', default=False, help="For running the tests (does not add a random id to the results)")
     parser.add_argument('--cache_in_memory', action='store_true', default=False, help="Cache data from a single run in memory")
-    parser.add_argument('--method', dest='method', default="allTrafo", help="Which method to use (singleShortestPath, singleClosestRun, other)")
-    parser.add_argument('--realign_runs', dest='realign_method', default="splineR", help="How to re-align runs in retention time ('diRT': use only deltaiRT from the input file, 'linear': perform a linear regression using best peakgroups, 'splineR': perform a spline fit using R, 'splineR_external': perform a spline fit using R (start an R process using the command line, 'splinePy' use Python native spline from scikits.datasmooth (slow!), 'lowess': use Robust locally weighted regression (lowess smoother)")
+    parser.add_argument('--method', dest='method', default="reference", help="Which method to use (singleShortestPath, singleClosestRun, reference)")
+    parser.add_argument('--realign_runs', dest='realign_method', default="lowess", help="How to re-align runs in retention time ('diRT': use only deltaiRT from the input file, 'linear': perform a linear regression using best peakgroups, 'splineR': perform a spline fit using R, 'splineR_external': perform a spline fit using R (start an R process using the command line), 'splinePy' use Python native spline from scikits.datasmooth (slow!), 'lowess': use Robust locally weighted regression (lowess smoother), 'nonCVSpline, CVSpline': splines with and without cross-validation, 'Earth' : use Multivariate Adaptive Regression Splines using py-earth")
     parser.add_argument('--verbosity', default=0, type=int, help="Verbosity")
     parser.add_argument('--do_single_run', default='', metavar="", help="Only do a single run")
 
@@ -788,9 +793,24 @@ def main(options):
 
     rid = None
     if options.method in ["singleShortestPath", "singleClosestRun"]:
-        new_exp, multipeptides, rid = runSingleFileImputation(options, options.peakgroups_infile, options.do_single_run, options.method, options.is_test)
+
+        # Some parameter checking
+        if options.do_single_run == "":
+            raise Exception("Input mzML file (--do_single_run) cannot be empty when choosing a tree-based approacht")
+
+        new_exp, multipeptides, rid = runSingleFileImputation(options,
+                                                              options.peakgroups_infile,
+                                                              options.do_single_run,
+                                                              options.method,
+                                                              options.is_test)
     else:
-        new_exp, multipeptides, rid = runImputeValues(options, options.peakgroups_infile, options.infiles, options.is_test)
+        if not options.method == "reference" and not options.method == "allTrafo":
+            print ("Found unknown method '%s', assuming 'reference'." % options.method)
+
+        new_exp, multipeptides, rid = runImputeValues(options,
+                                                      options.peakgroups_infile,
+                                                      options.infiles,
+                                                      options.is_test)
 
     if options.dry_run:
         return
@@ -800,4 +820,3 @@ def main(options):
 if __name__=="__main__":
     options = handle_args()
     main(options)
-
