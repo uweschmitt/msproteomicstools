@@ -148,8 +148,7 @@ def write_out_matrix_file(matrix_outfile, allruns, multipeptides, fraction_neede
     del matrix_writer
 
 def addDataToTrafo(tr_data, run_0, run_1, spl_aligner, multipeptides,
-                   realign_method, max_rt_diff, topN=5, sd_max_data_length=1000, tmpdir=None):
-                   realign_method, max_rt_diff, topN=5, sd_max_data_length=5000, force=False):
+                   realign_method, max_rt_diff, topN=5, sd_max_data_length=5000, force=False, tmpdir=None):
     id_0 = run_0.get_id()
     id_1 = run_1.get_id()
 
